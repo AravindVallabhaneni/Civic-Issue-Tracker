@@ -61,15 +61,6 @@ function OverviewTab() {
           </div>
         ))}
       </div>
-      <div className="card" style={{ padding: 16 }}>
-        <div style={{ fontWeight: 600, marginBottom: 12 }}>Quick Actions</div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <Link to="/issues" className="btn btn-outline btn-sm">View All Issues</Link>
-          <Link to="/" className="btn btn-outline btn-sm">Open Map</Link>
-          <Link to="/stats" className="btn btn-outline btn-sm">Statistics</Link>
-          <Link to="/report" className="btn btn-primary btn-sm">Report an Issue</Link>
-        </div>
-      </div>
     </div>
   );
 }
