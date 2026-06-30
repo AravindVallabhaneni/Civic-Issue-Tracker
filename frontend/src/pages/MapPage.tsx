@@ -80,7 +80,7 @@ export default function MapPage() {
   // Load public stats
   const loadStats = async () => {
     try {
-      const res = await fetch('/api/stats/public');
+      const res = await fetch((import.meta.env.VITE_API_URL || '') + '/api/stats/public');
       if (!res.ok) return;
       const data = await res.json();
       setTotalReports(data.total_reports ?? 0);

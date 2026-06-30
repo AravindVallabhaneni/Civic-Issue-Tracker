@@ -35,7 +35,7 @@ async function adminFetch(path: string, opts?: RequestInit) {
 function OverviewTab() {
   const [stats, setStats] = useState<any>(null);
   useEffect(() => {
-    adminFetch('/api/admin/overview').then(r => r.ok ? r.json() : null).then(setStats);
+    adminFetch((import.meta.env.VITE_API_URL || '') + '/api/admin/overview').then((r: any) => r.ok ? r.json() : null).then(setStats);
   }, []);
 
   if (!stats) return <div style={{ padding: 40, textAlign: 'center' }}>Loading…</div>;
@@ -78,7 +78,7 @@ function ClustersTab() {
 
   const load = useCallback(() => {
     setLoading(true);
-    fetch('/api/clusters?limit=200').then(r => r.ok ? r.json() : [])
+    fetch((import.meta.env.VITE_API_URL || '') + '/api/clusters?limit=200').then(r => r.ok ? r.json() : [])
       .then(d => { setClusters(Array.isArray(d) ? d : []); setLoading(false); });
   }, []);
 
@@ -186,7 +186,7 @@ function ReportsTab() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/reports?limit=100').then(r => r.ok ? r.json() : [])
+    fetch((import.meta.env.VITE_API_URL || '') + '/api/reports?limit=100').then(r => r.ok ? r.json() : [])
       .then(d => { setReports(Array.isArray(d) ? d : []); setLoading(false); });
   }, []);
 
@@ -236,14 +236,14 @@ function DepartmentsTab() {
   const [error, setError] = useState('');
 
   const load = () => {
-    adminFetch('/api/admin/departments').then(r => r.ok ? r.json() : [])
-      .then(d => { setDepts(Array.isArray(d) ? d : []); setLoading(false); });
+    adminFetch((import.meta.env.VITE_API_URL || '') + '/api/admin/departments').then((r: any) => r.ok ? r.json() : [])
+      .then((d: any) => { setDepts(Array.isArray(d) ? d : []); setLoading(false); });
   };
   useEffect(() => { load(); }, []);
 
   const handleAdd = async () => {
     setSaving(true); setError('');
-    const res = await adminFetch('/api/admin/departments', {
+    const res = await adminFetch((import.meta.env.VITE_API_URL || '') + '/api/admin/departments', {
       method: 'POST',
       body: JSON.stringify({
         name: form.name,
@@ -318,8 +318,8 @@ function UsersTab() {
 
   const load = () => {
     Promise.all([
-      adminFetch('/api/admin/users').then(r => r.ok ? r.json() : []),
-      adminFetch('/api/admin/departments').then(r => r.ok ? r.json() : []),
+      adminFetch((import.meta.env.VITE_API_URL || '') + '/api/admin/users').then((r: any) => r.ok ? r.json() : []),
+      adminFetch((import.meta.env.VITE_API_URL || '') + '/api/admin/departments').then((r: any) => r.ok ? r.json() : []),
     ]).then(([u, d]) => { setUsers(Array.isArray(u) ? u : []); setDepts(Array.isArray(d) ? d : []); setLoading(false); });
   };
   useEffect(() => { load(); }, []);

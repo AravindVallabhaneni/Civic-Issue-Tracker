@@ -23,7 +23,7 @@ export default function StatsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/stats/public')
+    fetch((import.meta.env.VITE_API_URL || '') + '/api/stats/public')
       .then(r => r.ok ? r.json() : null)
       .then(d => { setStats(d); setLoading(false); })
       .catch(() => setLoading(false));

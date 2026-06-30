@@ -130,7 +130,7 @@ export default function ReportPage() {
       const headers: Record<string, string> = {};
       if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`;
 
-      const res = await fetch('/api/reports', { method: 'POST', body: formData, headers });
+      const res = await fetch((import.meta.env.VITE_API_URL || '') + '/api/reports', { method: 'POST', body: formData, headers });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
       setSuccess({ id: data.id, clusterId: data.cluster_id });

@@ -35,7 +35,7 @@ export default function DashboardPage() {
   const PER_PAGE = 10;
 
   useEffect(() => {
-    fetch('/api/clusters?limit=100')
+    fetch((import.meta.env.VITE_API_URL || '') + '/api/clusters?limit=100')
       .then(r => r.ok ? r.json() : [])
       .then(d => { setClusters(Array.isArray(d) ? d : []); setLoading(false); })
       .catch(() => setLoading(false));
