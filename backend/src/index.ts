@@ -11,6 +11,7 @@ import reportsRouter from './routes/reports';
 import clustersRouter from './routes/clusters';
 import departmentsRouter from './routes/departments';
 import statsRouter from './routes/stats';
+import adminRouter from './routes/admin';
 import { startEscalationJob } from './jobs/escalation';
 
 const app = express();
@@ -40,6 +41,7 @@ app.use('/api/reports', reportsRouter);
 app.use('/api/clusters', clustersRouter);
 app.use('/api/departments', departmentsRouter);
 app.use('/api/stats', statsRouter);
+app.use('/api/admin', adminRouter);
 
 // Error handling
 app.use(errorHandler);

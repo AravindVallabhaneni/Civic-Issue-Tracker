@@ -1,100 +1,141 @@
-import { useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { CATEGORY_LABELS, CATEGORY_ICONS } from '../types';
-import type { IssueCategory } from '../types';
-import {
-  MapPinIcon, CameraIcon, CheckCircleIcon,
-  ExclamationCircleIcon, ArrowLeftIcon
-} from '@heroicons/react/24/outline';
+import L from 'leaflet';
 
-const CATEGORIES: IssueCategory[] = [
-  'streetlight', 'garbage', 'water_leak', 'pothole',
-  'road_damage', 'noise_pollution', 'illegal_dumping', 'other',
+const CATEGORIES = [
+  { value: 'streetlight', label: 'Street Light' },
+  { value: 'garbage', label: 'Garbage / Sanitation' },
+  { value: 'water_leak', label: 'Water Leak' },
+  { value: 'pothole', label: 'Pothole' },
+  { value: 'road_damage', label: 'Road Damage' },
+  { value: 'noise_pollution', label: 'Noise Pollution' },
+  { value: 'illegal_dumping', label: 'Illegal Dumping' },
+  { value: 'other', label: 'Other' },
 ];
 
-type Step = 'location' | 'details' | 'photo' | 'submit';
-
 export default function ReportPage() {
+  const { user, profile } = useAuthStore();
   const navigate = useNavigate();
-  const { user } = useAuthStore();
-  const [step, setStep] = useState<Step>('location');
-  const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState<{ id: string; clusterId: string | null } | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const [lat, setLat] = useState<number | null>(null);
-  const [lng, setLng] = useState<number | null>(null);
-  const [locationLoading, setLocationLoading] = useState(false);
-  const [manualAddress, setManualAddress] = useState('');
+  // Admins cannot submit reports — redirect to admin panel
+  useEffect(() => {
+    if (profile?.role === 'admin') navigate('/admin', { replace: true });
+  }, [profile, navigate]);
 
-  const [category, setCategory] = useState<IssueCategory | null>(null);
-  const [description, setDescription] = useState('');
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [category, setCategory] = useState('');
+  const [description, setDescription] = useState('');
+  const [lat, setLat] = useState<number | null>(null);
+  const [lng, setLng] = useState<number | null>(null);
+  const [address, setAddress] = useState('Detecting location...');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<{ id: string; clusterId: string | null } | null>(null);
+  const [dragging, setDragging] = useState(false);
 
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const markerRef = useRef<L.Marker | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const detectLocation = () => {
-    setLocationLoading(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLat(pos.coords.latitude);
-        setLng(pos.coords.longitude);
-        setLocationLoading(false);
-      },
-      (err) => {
-        setError('Could not detect location. Please try again or enter manually.');
-        setLocationLoading(false);
-      },
+  // Reverse geocode
+  const reverseGeocode = useCallback(async (lat: number, lng: number) => {
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+        { headers: { 'Accept-Language': 'en' } }
+      );
+      const data = await res.json();
+      const a = data.address || {};
+      const parts = [a.road, a.suburb || a.neighbourhood, a.city || a.county, a.state].filter(Boolean);
+      setAddress(parts.length ? parts.join(', ') : data.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+    } catch {
+      setAddress(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+    }
+  }, []);
+
+  const updateMarker = useCallback((lat: number, lng: number) => {
+    setLat(lat); setLng(lng);
+    reverseGeocode(lat, lng);
+    if (markerRef.current) markerRef.current.setLatLng([lat, lng]);
+    mapRef.current?.panTo([lat, lng]);
+  }, [reverseGeocode]);
+
+  // Init map
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
+
+    const map = L.map(mapContainerRef.current, {
+      center: [20.5937, 78.9629], zoom: 13, zoomControl: true,
+    });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap contributors © CARTO', maxZoom: 19,
+    }).addTo(map);
+
+    const icon = L.divIcon({
+      html: `<div style="width:24px;height:24px;border-radius:50% 50% 50% 0;background:#2563eb;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);transform:rotate(-45deg)"></div>`,
+      iconSize: [24, 24], iconAnchor: [12, 24], className: '',
+    });
+
+    const marker = L.marker([20.5937, 78.9629], { icon, draggable: true }).addTo(map);
+    marker.on('dragend', () => {
+      const pos = marker.getLatLng();
+      updateMarker(pos.lat, pos.lng);
+    });
+
+    map.on('click', (e) => updateMarker(e.latlng.lat, e.latlng.lng));
+
+    mapRef.current = map;
+    markerRef.current = marker;
+
+    // Auto-detect location
+    setAddress('Detecting location...');
+    navigator.geolocation?.getCurrentPosition(
+      pos => updateMarker(pos.coords.latitude, pos.coords.longitude),
+      () => { setAddress('Location not detected — click map to set'); setLat(null); setLng(null); },
       { enableHighAccuracy: true, timeout: 10000 }
     );
-  };
 
-  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    return () => { map.remove(); mapRef.current = null; markerRef.current = null; };
+  }, [updateMarker]);
+
+  const handlePhotoSelect = (file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    if (file.size > 5 * 1024 * 1024) { setError('Photo must be under 5MB'); return; }
     setPhoto(file);
-    const url = URL.createObjectURL(file);
-    setPhotoPreview(url);
+    setPhotoPreview(URL.createObjectURL(file));
+    setError(null);
   };
 
-  const handleSubmit = async () => {
-    if (!category || !lat || !lng) {
-      setError('Please complete all required fields.');
-      return;
-    }
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) { navigate('/auth?redirect=/report'); return; }
+    if (!category) { setError('Please select a category.'); return; }
+    if (!lat || !lng) { setError('Please set your location on the map.'); return; }
 
-    setSubmitting(true);
-    setError(null);
+    setSubmitting(true); setError(null);
 
     try {
       const formData = new FormData();
       formData.append('category', category);
       formData.append('lat', lat.toString());
       formData.append('lng', lng.toString());
-      if (description) formData.append('description', description);
+      if (description.trim()) formData.append('description', description.trim());
       if (photo) formData.append('photo', photo);
 
+      const { supabase } = await import('../lib/supabase');
+      const { data: { session } } = await supabase.auth.getSession();
       const headers: Record<string, string> = {};
-      const session = user ? (await import('../lib/supabase')).supabase.auth.getSession() : null;
-      // Note: auth token would be retrieved from the store in production
+      if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`;
 
-      const response = await fetch('/api/reports', {
-        method: 'POST',
-        body: formData,
-        headers,
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Request failed: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const res = await fetch('/api/reports', { method: 'POST', body: formData, headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
       setSuccess({ id: data.id, clusterId: data.cluster_id });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Submission failed');
+      setError(err instanceof Error ? err.message : 'Submission failed. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -102,30 +143,17 @@ export default function ReportPage() {
 
   if (success) {
     return (
-      <div className="h-full flex items-center justify-center p-4">
-        <div className="card p-8 max-w-md w-full text-center animate-fade-in">
-          <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-4">
-            <CheckCircleIcon className="w-8 h-8 text-green-400" />
-          </div>
-          <h2 className="text-xl font-bold text-white mb-2">Report Submitted!</h2>
-          <p className="text-slate-400 text-sm mb-1">
-            Your issue has been logged and{' '}
-            {success.clusterId ? 'grouped with nearby reports.' : 'is being processed.'}
+      <div style={{ maxWidth: 600, margin: '60px auto', padding: 24 }}>
+        <div className="card p-6" style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
+          <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Report Submitted!</h2>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>
+            Your issue has been logged{success.clusterId ? ' and grouped with nearby reports' : ''}.
           </p>
-          {success.clusterId && (
-            <p className="text-slate-500 text-xs mb-6">
-              Cluster ID: <span className="font-mono text-brand-400">{success.clusterId.slice(0, 8)}...</span>
-            </p>
-          )}
-          <div className="flex gap-3">
-            <button onClick={() => navigate('/')} className="btn-primary flex-1">
-              View on Map
-            </button>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+            <button className="btn btn-outline" onClick={() => navigate('/')}>View Map</button>
             {success.clusterId && (
-              <button
-                onClick={() => navigate(`/clusters/${success.clusterId}`)}
-                className="btn-secondary flex-1"
-              >
+              <button className="btn btn-primary" onClick={() => navigate(`/issues/${success.clusterId}`)}>
                 Track Issue
               </button>
             )}
@@ -136,274 +164,110 @@ export default function ReportPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-2xl mx-auto p-4 pb-8">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-6 pt-2">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-all"
-          >
-            <ArrowLeftIcon className="w-5 h-5" />
-          </button>
-          <div>
-            <h1 className="text-xl font-bold text-white">Report an Issue</h1>
-            <p className="text-slate-500 text-sm">Help improve your neighborhood</p>
-          </div>
-        </div>
+    <div style={{ background: 'var(--bg)', minHeight: 'calc(100vh - 56px)' }}>
+      <div style={{ maxWidth: 680, margin: '0 auto', padding: '40px 24px' }}>
+        <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 4 }}>Report an Issue</h1>
+        <p style={{ color: 'var(--text-secondary)', marginBottom: 32 }}>
+          Your reports help us maintain a safer and cleaner community environment.
+        </p>
 
-        {/* Progress steps */}
-        <div className="flex gap-2 mb-6">
-          {(['location', 'details', 'photo', 'submit'] as Step[]).map((s, i) => (
-            <div key={s} className="flex-1 flex flex-col gap-1">
-              <div
-                className={`h-1 rounded-full transition-all ${
-                  step === s
-                    ? 'bg-brand-500'
-                    : ['location', 'details', 'photo', 'submit'].indexOf(step) > i
-                    ? 'bg-brand-700'
-                    : 'bg-white/10'
-                }`}
-              />
-              <span className="text-xs text-slate-500 capitalize">{s}</span>
+        <form onSubmit={handleSubmit}>
+          <div className="card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
+
+            {/* Photo Evidence */}
+            <div>
+              <label className="form-label">Photo Evidence</label>
+              {photoPreview ? (
+                <div style={{ position: 'relative' }}>
+                  <img src={photoPreview} alt="Preview"
+                    style={{ width: '100%', height: 200, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />
+                  <button type="button"
+                    onClick={() => { setPhoto(null); setPhotoPreview(null); }}
+                    style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 13 }}>
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <div
+                  className={`upload-area ${dragging ? 'dragging' : ''}`}
+                  onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                  onDragLeave={() => setDragging(false)}
+                  onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) handlePhotoSelect(f); }}
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{ borderColor: dragging ? 'var(--primary)' : undefined }}
+                >
+                  <div className="upload-icon">
+                    <svg width="36" height="36" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM18.75 10.5h.008v.008h-.008V10.5z" />
+                    </svg>
+                  </div>
+                  <div className="upload-text">Tap to upload or drag photo here</div>
+                  <div className="upload-hint">MAX 5MB • JPG, PNG</div>
+                </div>
+              )}
+              <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" hidden
+                onChange={e => { const f = e.target.files?.[0]; if (f) handlePhotoSelect(f); }} />
             </div>
-          ))}
-        </div>
 
-        {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 flex items-start gap-2">
-            <ExclamationCircleIcon className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-            <p className="text-red-300 text-sm">{error}</p>
-          </div>
-        )}
+            {/* Category */}
+            <div>
+              <label className="form-label">Category</label>
+              <select className="form-select" value={category} onChange={e => setCategory(e.target.value)}>
+                <option value="">Select a category</option>
+                {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </div>
 
-        {/* Step: Location */}
-        {step === 'location' && (
-          <div className="card p-6 animate-fade-in">
-            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <MapPinIcon className="w-5 h-5 text-brand-400" />
-              Where is the issue?
-            </h2>
-
-            {lat && lng ? (
-              <div className="mb-4 p-4 rounded-lg bg-green-500/10 border border-green-500/30">
-                <p className="text-green-400 font-medium text-sm">✓ Location detected</p>
-                <p className="text-slate-400 text-xs mt-1 font-mono">
-                  {lat.toFixed(5)}, {lng.toFixed(5)}
-                </p>
+            {/* Location */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <label className="form-label" style={{ margin: 0 }}>Location</label>
+                <button type="button" style={{ fontSize: 13, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer' }}
+                  onClick={() => {
+                    setAddress('Detecting...');
+                    navigator.geolocation?.getCurrentPosition(
+                      pos => updateMarker(pos.coords.latitude, pos.coords.longitude),
+                      () => setAddress('Could not detect location')
+                    );
+                  }}>
+                  Adjust Pin
+                </button>
               </div>
-            ) : (
-              <div className="mb-4 p-4 rounded-lg bg-white/5 border border-white/10">
-                <p className="text-slate-400 text-sm">No location set yet</p>
+              <div ref={mapContainerRef} style={{ height: 180, borderRadius: 6, border: '1px solid var(--border)', overflow: 'hidden' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 13, color: 'var(--text-secondary)' }}>
+                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+                </svg>
+                <span>{address}</span>
+              </div>
+            </div>
+
+            {/* Description */}
+            <div>
+              <label className="form-label">Short Description</label>
+              <textarea className="form-textarea" placeholder="Describe the issue in a few words..."
+                value={description} onChange={e => setDescription(e.target.value)}
+                style={{ minHeight: 90 }} />
+            </div>
+
+            {error && (
+              <div className="alert alert-error">{error}</div>
+            )}
+
+            {!user && (
+              <div className="alert alert-info">
+                <span>You must <Link to="/auth?redirect=/report" style={{ fontWeight: 600 }}>login or sign up</Link> to submit a report.</span>
               </div>
             )}
 
-            <button
-              onClick={detectLocation}
-              disabled={locationLoading}
-              className="btn-primary w-full mb-3 flex items-center justify-center gap-2"
-              id="detect-location-btn"
-            >
-              <MapPinIcon className="w-4 h-4" />
-              {locationLoading ? 'Detecting...' : lat ? 'Re-detect Location' : 'Detect My Location'}
-            </button>
-
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div>
-                <label className="label">Latitude</label>
-                <input
-                  type="number"
-                  className="input-field"
-                  placeholder="12.9716"
-                  value={lat ?? ''}
-                  onChange={(e) => setLat(parseFloat(e.target.value) || null)}
-                />
-              </div>
-              <div>
-                <label className="label">Longitude</label>
-                <input
-                  type="number"
-                  className="input-field"
-                  placeholder="77.5946"
-                  value={lng ?? ''}
-                  onChange={(e) => setLng(parseFloat(e.target.value) || null)}
-                />
-              </div>
-            </div>
-
-            <button
-              onClick={() => {
-                if (!lat || !lng) { setError('Please set a location first.'); return; }
-                setError(null);
-                setStep('details');
-              }}
-              className="btn-primary w-full"
-              disabled={!lat || !lng}
-            >
-              Next: Describe the Issue →
+            <button type="submit" className="btn btn-primary btn-lg w-full" disabled={submitting || !user}
+              style={{ justifyContent: 'center' }}>
+              {submitting ? <><span className="spinner" />Submitting...</> : 'Submit Report ➤'}
             </button>
           </div>
-        )}
-
-        {/* Step: Details */}
-        {step === 'details' && (
-          <div className="card p-6 animate-fade-in">
-            <h2 className="text-lg font-semibold text-white mb-4">What's the issue?</h2>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5">
-              {CATEGORIES.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setCategory(cat)}
-                  className={`p-3 rounded-xl border transition-all flex flex-col items-center gap-1.5 ${
-                    category === cat
-                      ? 'border-brand-500 bg-brand-600/20 text-white'
-                      : 'border-white/10 bg-white/5 text-slate-400 hover:border-white/20 hover:text-white'
-                  }`}
-                >
-                  <span className="text-2xl">{CATEGORY_ICONS[cat]}</span>
-                  <span className="text-xs font-medium text-center leading-tight">{CATEGORY_LABELS[cat]}</span>
-                </button>
-              ))}
-            </div>
-
-            <div className="mb-5">
-              <label className="label">Description <span className="text-slate-500">(optional)</span></label>
-              <textarea
-                className="input-field min-h-[100px] resize-none"
-                placeholder="Describe the issue in detail — the more specific the better..."
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                maxLength={1000}
-              />
-              <p className="text-xs text-slate-500 mt-1 text-right">{description.length}/1000</p>
-            </div>
-
-            <div className="flex gap-3">
-              <button onClick={() => setStep('location')} className="btn-secondary flex-1">
-                ← Back
-              </button>
-              <button
-                onClick={() => {
-                  if (!category) { setError('Please select a category.'); return; }
-                  setError(null);
-                  setStep('photo');
-                }}
-                className="btn-primary flex-1"
-                disabled={!category}
-              >
-                Next: Add Photo →
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Step: Photo */}
-        {step === 'photo' && (
-          <div className="card p-6 animate-fade-in">
-            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <CameraIcon className="w-5 h-5 text-brand-400" />
-              Add a photo <span className="text-slate-500 text-base font-normal">(optional)</span>
-            </h2>
-
-            {photoPreview ? (
-              <div className="mb-4 relative">
-                <img
-                  src={photoPreview}
-                  alt="Preview"
-                  className="w-full h-48 object-cover rounded-xl"
-                />
-                <button
-                  onClick={() => { setPhoto(null); setPhotoPreview(null); }}
-                  className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 text-white hover:bg-black/70 transition-all"
-                >
-                  ✕
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full h-40 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center gap-2 hover:border-brand-500/50 hover:bg-brand-600/5 transition-all mb-4 cursor-pointer"
-              >
-                <CameraIcon className="w-10 h-10 text-slate-600" />
-                <p className="text-slate-500 text-sm">Click to upload photo</p>
-                <p className="text-slate-600 text-xs">JPEG, PNG, WebP — max 10MB</p>
-              </button>
-            )}
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={handlePhotoSelect}
-            />
-
-            <div className="flex gap-3">
-              <button onClick={() => setStep('details')} className="btn-secondary flex-1">
-                ← Back
-              </button>
-              <button onClick={() => setStep('submit')} className="btn-primary flex-1">
-                Next: Review →
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Step: Submit */}
-        {step === 'submit' && (
-          <div className="card p-6 animate-fade-in">
-            <h2 className="text-lg font-semibold text-white mb-4">Review & Submit</h2>
-
-            <div className="space-y-3 mb-6">
-              <div className="flex items-center justify-between p-3 rounded-lg bg-white/5">
-                <span className="text-slate-400 text-sm">Location</span>
-                <span className="text-white text-sm font-mono">
-                  {lat?.toFixed(4)}, {lng?.toFixed(4)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between p-3 rounded-lg bg-white/5">
-                <span className="text-slate-400 text-sm">Category</span>
-                <span className="text-white text-sm flex items-center gap-1.5">
-                  {category && CATEGORY_ICONS[category]} {category && CATEGORY_LABELS[category]}
-                </span>
-              </div>
-              {description && (
-                <div className="p-3 rounded-lg bg-white/5">
-                  <p className="text-slate-400 text-sm mb-1">Description</p>
-                  <p className="text-white text-sm">{description}</p>
-                </div>
-              )}
-              {photoPreview && (
-                <div className="p-3 rounded-lg bg-white/5">
-                  <p className="text-slate-400 text-sm mb-2">Photo</p>
-                  <img src={photoPreview} alt="Preview" className="w-full h-32 object-cover rounded-lg" />
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3">
-              <button onClick={() => setStep('photo')} className="btn-secondary flex-1">
-                ← Back
-              </button>
-              <button
-                onClick={handleSubmit}
-                disabled={submitting}
-                className="btn-primary flex-1 flex items-center justify-center gap-2"
-                id="submit-report-btn"
-              >
-                {submitting ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Submitting...
-                  </>
-                ) : (
-                  'Submit Report'
-                )}
-              </button>
-            </div>
-          </div>
-        )}
+        </form>
       </div>
     </div>
   );

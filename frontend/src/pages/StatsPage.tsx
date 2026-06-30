@@ -1,215 +1,181 @@
 import { useEffect, useState } from 'react';
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, Legend
-} from 'recharts';
-import type { PublicStats } from '../types';
-import { CATEGORY_COLORS, CATEGORY_LABELS } from '../types';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
-const RADIAN = Math.PI / 180;
-
-function CustomLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: {
-  cx: number; cy: number; midAngle: number; innerRadius: number;
-  outerRadius: number; percent: number;
-}) {
-  const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
-  const x = cx + radius * Math.cos(-midAngle * RADIAN);
-  const y = cy + radius * Math.sin(-midAngle * RADIAN);
-  return percent > 0.05 ? (
-    <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={11}>
-      {`${(percent * 100).toFixed(0)}%`}
-    </text>
-  ) : null;
+interface Stats {
+  total_reports: number;
+  total_clusters: number;
+  open_clusters: number;
+  resolved_this_month: number;
+  avg_resolution_hours: number | null;
+  by_category: Record<string, number> | null;
+  by_department: Array<{ department: string; total: number; resolved: number }> | null;
+  monthly_reports: Array<{ name: string; value: number }> | null;
 }
 
+const CAT_LABELS: Record<string, string> = {
+  streetlight: 'Street Lights', garbage: 'Sanitation', water_leak: 'Water Leak',
+  pothole: 'Potholes', road_damage: 'Road Damage', noise_pollution: 'Noise',
+  illegal_dumping: 'Illegal Dumping', other: 'Other',
+};
+
 export default function StatsPage() {
-  const [stats, setStats] = useState<PublicStats | null>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch('/api/stats/public')
-      .then((r) => r.json())
-      .then(setStats)
-      .catch(console.error)
-      .finally(() => setLoading(false));
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { setStats(d); setLoading(false); })
+      .catch(() => setLoading(false));
   }, []);
 
-  if (loading) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-brand-600/30 border-t-brand-600 rounded-full animate-spin" />
-      </div>
-    );
-  }
+  const resolutionRate = stats && stats.total_clusters > 0
+    ? ((stats.resolved_this_month / stats.total_clusters) * 100).toFixed(1)
+    : '0.0';
 
-  const mockStats: PublicStats = stats || {
-    total_reports: 1247,
-    total_clusters: 384,
-    resolved_this_month: 89,
-    open_clusters: 201,
-    avg_resolution_hours: 48.5,
-    by_category: {
-      streetlight: 210, garbage: 380, water_leak: 95, pothole: 287,
-      road_damage: 142, noise_pollution: 63, illegal_dumping: 45, other: 25,
-    },
-    by_department: [
-      { department: 'Roads & Infrastructure', total: 429, resolved: 120 },
-      { department: 'Sanitation Department', total: 425, resolved: 180 },
-      { department: 'Electrical Department', total: 210, resolved: 95 },
-      { department: 'Water & Sewage', total: 95, resolved: 40 },
-      { department: 'Environment & Noise', total: 63, resolved: 25 },
-    ],
-  };
+  const avgDays = stats?.avg_resolution_hours
+    ? (stats.avg_resolution_hours / 24).toFixed(1)
+    : null;
 
-  const categoryData = Object.entries(mockStats.by_category).map(([cat, count]) => ({
-    name: CATEGORY_LABELS[cat as keyof typeof CATEGORY_LABELS] || cat,
-    value: count,
-    color: CATEGORY_COLORS[cat as keyof typeof CATEGORY_COLORS] || '#6b7280',
-  }));
+  const catData = stats?.by_category
+    ? Object.entries(stats.by_category).map(([k, v]) => ({ name: CAT_LABELS[k] ?? k, value: v })).sort((a, b) => b.value - a.value)
+    : [];
 
-  const deptData = mockStats.by_department.map((d) => ({
-    name: d.department.replace(' Department', '').replace(' & ', '/'),
-    total: d.total,
-    resolved: d.resolved,
-    open: d.total - d.resolved,
-  }));
+  const monthlyData = stats?.monthly_reports ?? [];
+  const deptData = stats?.by_department ?? [];
 
-  const resolutionRate = mockStats.total_clusters > 0
-    ? ((mockStats.resolved_this_month / mockStats.total_clusters) * 100).toFixed(1)
-    : '0';
+  if (loading) return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>
+      <div className="spinner" style={{ width: 32, height: 32, borderColor: 'var(--border)', borderTopColor: 'var(--primary)' }} />
+    </div>
+  );
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-5xl mx-auto p-4 pb-8">
-        <div className="pt-2 mb-6">
-          <h1 className="text-2xl font-bold text-white">Public Transparency Dashboard</h1>
-          <p className="text-slate-500 text-sm mt-1">Real-time civic issue statistics for your city</p>
-        </div>
+    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 40px' }}>
 
-        {/* KPI cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          {[
-            { label: 'Total Reports', value: mockStats.total_reports.toLocaleString(), color: 'text-brand-400', icon: '📋' },
-            { label: 'Active Clusters', value: mockStats.open_clusters.toLocaleString(), color: 'text-orange-400', icon: '🔵' },
-            { label: 'Resolved This Month', value: mockStats.resolved_this_month.toLocaleString(), color: 'text-green-400', icon: '✅' },
-            { label: 'Avg Resolution', value: mockStats.avg_resolution_hours ? `${mockStats.avg_resolution_hours}h` : 'N/A', color: 'text-purple-400', icon: '⏱️' },
-          ].map((kpi) => (
-            <div key={kpi.label} className="card p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-2xl">{kpi.icon}</span>
-                <span className={`text-2xl font-bold ${kpi.color}`}>{kpi.value}</span>
-              </div>
-              <p className="text-slate-500 text-xs">{kpi.label}</p>
+      <div id="overview">
+        <h1 style={{ fontSize: 26, fontWeight: 700, marginBottom: 4 }}>Municipal Performance Report</h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 32, maxWidth: 600 }}>
+          This report outlines the responsiveness and resolution efficacy of city services based on community-reported issues.
+        </p>
+
+        {/* KPI Cards */}
+        <div className="card" style={{ marginBottom: 24 }}>
+          <div style={{ padding: '12px 24px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+            KEY PERFORMANCE INDICATORS
+          </div>
+          <div className="kpi-grid">
+            <div className="kpi-card">
+              <div className="kpi-label">Total Issues Reported</div>
+              <div className="kpi-value">{(stats?.total_reports ?? 0).toLocaleString()}</div>
+              <div className="kpi-sub">All time</div>
             </div>
-          ))}
-        </div>
-
-        {/* Resolution rate bar */}
-        <div className="card p-4 mb-6">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-white">Overall Resolution Rate</p>
-            <span className="text-brand-400 font-bold">{resolutionRate}%</span>
-          </div>
-          <div className="w-full h-3 bg-white/10 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-brand-600 to-green-500 rounded-full transition-all duration-1000"
-              style={{ width: `${resolutionRate}%` }}
-            />
+            <div className="kpi-card">
+              <div className="kpi-label">Resolution Rate</div>
+              <div className="kpi-value blue">{resolutionRate}%</div>
+              <div className="kpi-sub">This month</div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-label">Avg. Response Time</div>
+              <div className="kpi-value blue">{avgDays ? `${avgDays} Days` : '—'}</div>
+              <div className="kpi-sub">{avgDays ? 'Since first report' : 'No resolved issues yet'}</div>
+            </div>
           </div>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-4 mb-6">
-          {/* Category pie chart */}
-          <div className="card p-4">
-            <h2 className="text-sm font-semibold text-white mb-4">Issues by Category</h2>
-            <ResponsiveContainer width="100%" height={260}>
-              <PieChart>
-                <Pie
-                  data={categoryData}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={CustomLabel}
-                  outerRadius={100}
-                  dataKey="value"
-                >
-                  {categoryData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{ background: '#1a2234', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
-                  labelStyle={{ color: '#e2e8f0' }}
-                  itemStyle={{ color: '#94a3b8' }}
-                />
-                <Legend
-                  formatter={(value) => <span style={{ color: '#94a3b8', fontSize: 12 }}>{value}</span>}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+        {/* Charts */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
+          {/* Monthly Reports */}
+          <div className="card" style={{ padding: 24 }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>Monthly Reports</div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>Volume of issues submitted per month</div>
+            {monthlyData.length === 0 ? (
+              <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 14 }}>No data yet</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={monthlyData} margin={{ bottom: 0 }}>
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[3, 3, 0, 0]}>
+                    {monthlyData.map((_, i) => <Cell key={i} fill={i === monthlyData.length - 2 ? '#2563eb' : '#93c5fd'} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
 
-          {/* Department bar chart */}
-          <div className="card p-4">
-            <h2 className="text-sm font-semibold text-white mb-4">By Department</h2>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={deptData} layout="vertical" margin={{ left: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis type="number" tick={{ fill: '#64748b', fontSize: 11 }} />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  tick={{ fill: '#64748b', fontSize: 10 }}
-                  width={80}
-                />
-                <Tooltip
-                  contentStyle={{ background: '#1a2234', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
-                  labelStyle={{ color: '#e2e8f0' }}
-                />
-                <Bar dataKey="resolved" name="Resolved" fill="#10b981" radius={[0, 4, 4, 0]} />
-                <Bar dataKey="open" name="Open" fill="#3b82f6" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+          {/* Open vs Resolved */}
+          <div className="card" style={{ padding: 24 }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>Issue Status Overview</div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>Open vs. Resolved clusters</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 16 }}>
+              {[
+                { label: 'Open Issues', value: stats?.open_clusters ?? 0, color: '#ef4444' },
+                { label: 'Resolved This Month', value: stats?.resolved_this_month ?? 0, color: '#10b981' },
+                { label: 'Total Clusters', value: stats?.total_clusters ?? 0, color: '#2563eb' },
+              ].map(({ label, value, color }) => (
+                <div key={label}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+                    <span style={{ fontWeight: 600 }}>{value.toLocaleString()}</span>
+                  </div>
+                  <div style={{ height: 8, background: 'var(--bg)', borderRadius: 4, overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%', background: color, borderRadius: 4,
+                      width: stats?.total_clusters ? `${Math.min(100, (value / stats.total_clusters) * 100)}%` : '0%',
+                      transition: 'width 0.6s ease',
+                    }} />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* Department table */}
-        <div className="card p-4">
-          <h2 className="text-sm font-semibold text-white mb-4">Department Performance</h2>
-          <div className="overflow-x-auto">
-            <table className="w-full">
+        {/* Department Performance */}
+        <div className="card">
+          <div style={{ padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontWeight: 700, fontSize: 16 }}>Department Performance</span>
+          </div>
+          {deptData.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 14 }}>No department data available yet.</div>
+          ) : (
+            <table className="table">
               <thead>
-                <tr className="text-left">
-                  <th className="text-xs text-slate-500 uppercase pb-3 pr-4">Department</th>
-                  <th className="text-xs text-slate-500 uppercase pb-3 pr-4">Total</th>
-                  <th className="text-xs text-slate-500 uppercase pb-3 pr-4">Resolved</th>
-                  <th className="text-xs text-slate-500 uppercase pb-3">Rate</th>
+                <tr>
+                  <th>DEPARTMENT</th>
+                  <th>ACTIVE</th>
+                  <th>RESOLVED</th>
+                  <th>TOTAL</th>
+                  <th>STATUS</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/5">
-                {mockStats.by_department.map((dept, i) => {
-                  const rate = ((dept.resolved / dept.total) * 100).toFixed(0);
+              <tbody>
+                {deptData.map((d: any, i: number) => {
+                  const rate = d.total > 0 ? (d.resolved / d.total) * 100 : 0;
+                  const status = rate > 80 ? 'OPTIMAL' : rate > 50 ? 'STABLE' : 'LAGGING';
+                  const badgeColor = status === 'OPTIMAL' ? '#d1fae5' : status === 'STABLE' ? '#dbeafe' : '#fee2e2';
+                  const textColor = status === 'OPTIMAL' ? '#065f46' : status === 'STABLE' ? '#1e40af' : '#b91c1c';
                   return (
-                    <tr key={i} className="group">
-                      <td className="py-2.5 pr-4 text-white text-sm">{dept.department}</td>
-                      <td className="py-2.5 pr-4 text-slate-400 text-sm">{dept.total}</td>
-                      <td className="py-2.5 pr-4 text-green-400 text-sm">{dept.resolved}</td>
-                      <td className="py-2.5">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden w-20">
-                            <div
-                              className="h-full bg-green-500 rounded-full"
-                              style={{ width: `${rate}%` }}
-                            />
-                          </div>
-                          <span className="text-slate-400 text-xs">{rate}%</span>
-                        </div>
+                    <tr key={i}>
+                      <td style={{ fontWeight: 500 }}>{d.department ?? 'Unassigned'}</td>
+                      <td>{(d.total - d.resolved).toLocaleString()}</td>
+                      <td>{d.resolved.toLocaleString()}</td>
+                      <td>{d.total.toLocaleString()}</td>
+                      <td>
+                        <span style={{ background: badgeColor, color: textColor, padding: '2px 10px', borderRadius: 4, fontSize: 11, fontWeight: 700 }}>
+                          {status}
+                        </span>
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+          )}
+          <div style={{ padding: '12px 16px', background: 'var(--bg)', fontSize: 12, color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
+            * Data is updated in real time. "Resolved" indicates the issue has been addressed by municipal crews.
           </div>
         </div>
       </div>

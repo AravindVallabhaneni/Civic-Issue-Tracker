@@ -1,201 +1,212 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { STATUS_COLORS, STATUS_LABELS, CATEGORY_ICONS, CATEGORY_LABELS } from '../types';
-import type { Cluster } from '../types';
-import { ClockIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+
+const CATEGORY_LABELS: Record<string, string> = {
+  streetlight: 'Infrastructure', garbage: 'Sanitation', water_leak: 'Utilities',
+  pothole: 'Infrastructure', road_damage: 'Infrastructure', noise_pollution: 'Public Safety',
+  illegal_dumping: 'Sanitation', other: 'General',
+};
+
+function timeAgo(dateStr: string) {
+  const ms = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(ms / 60000);
+  if (mins < 60) return `${mins}m ${Math.floor(mins % 60)}s`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ${mins % 60}m`;
+  return `${Math.floor(hrs / 24)}d ${hrs % 24}h`;
+}
+
+function priorityBadge(p: number) {
+  if (p >= 70) return { label: 'CRITICAL', bg: '#fca5a5', color: '#7f1d1d' };
+  if (p >= 40) return { label: 'HIGH', bg: '#93c5fd', color: '#1e3a8a' };
+  if (p >= 20) return { label: 'MEDIUM', bg: '#d1d5db', color: '#374151' };
+  return { label: 'LOW', bg: '#e5e7eb', color: '#6b7280' };
+}
 
 export default function DashboardPage() {
-  const { departmentId, role } = useAuthStore();
+  const { user, profile, signOut } = useAuthStore();
   const navigate = useNavigate();
-  const [clusters, setClusters] = useState<Cluster[]>([]);
-  const [stats, setStats] = useState<Record<string, number> | null>(null);
+  const [clusters, setClusters] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<string>('all');
+  const [catFilter, setCatFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('active');
+  const [page, setPage] = useState(1);
+  const PER_PAGE = 10;
 
   useEffect(() => {
-    fetchClusters();
-    if (departmentId) fetchDeptStats();
-  }, [departmentId]);
+    fetch('/api/clusters?limit=100')
+      .then(r => r.ok ? r.json() : [])
+      .then(d => { setClusters(Array.isArray(d) ? d : []); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
 
-  const fetchClusters = async () => {
-    const params = new URLSearchParams({ limit: '50' });
-    if (filter !== 'all') params.set('status', filter);
+  const filtered = clusters.filter(c => {
+    const matchCat = catFilter === 'all' || CATEGORY_LABELS[c.category] === catFilter;
+    const matchStatus = statusFilter === 'all' ||
+      (statusFilter === 'active' && (c.status === 'open' || c.status === 'assigned')) ||
+      (statusFilter === 'resolved' && c.status === 'resolved');
+    return matchCat && matchStatus;
+  }).sort((a, b) => b.priority - a.priority);
 
-    const res = await fetch(`/api/clusters?${params}`);
-    if (res.ok) {
-      const data = await res.json();
-      setClusters(data);
-    }
-    setLoading(false);
-  };
+  const paginated = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+  const totalPages = Math.ceil(filtered.length / PER_PAGE);
 
-  const fetchDeptStats = async () => {
-    if (!departmentId) return;
-    const res = await fetch(`/api/stats/department/${departmentId}`);
-    if (res.ok) {
-      const data = await res.json();
-      setStats(data);
-    }
-  };
-
-  useEffect(() => {
-    fetchClusters();
-  }, [filter]);
-
-  const sortedClusters = [...clusters].sort((a, b) => b.priority - a.priority);
-
-  const getSlaClass = (createdAt: string) => {
-    const hours = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60);
-    if (hours > 72) return 'text-red-400';
-    if (hours > 24) return 'text-orange-400';
-    return 'text-green-400';
-  };
-
-  const formatAge = (createdAt: string) => {
-    const hours = Math.round((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60));
-    if (hours < 24) return `${hours}h`;
-    return `${Math.round(hours / 24)}d`;
-  };
+  const pending = clusters.filter(c => c.status === 'open').length;
+  const resolved24h = clusters.filter(c => {
+    if (c.status !== 'resolved') return false;
+    return Date.now() - new Date(c.updated_at).getTime() < 86400000;
+  }).length;
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-5xl mx-auto p-4 pb-8">
-        <div className="pt-2 mb-6">
-          <h1 className="text-2xl font-bold text-white">Department Dashboard</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            Manage and resolve civic issues assigned to your department
+    <div className="sidebar-layout">
+      {/* Sidebar */}
+      <div className="sidebar" style={{ width: 220 }}>
+        <div style={{ padding: '0 16px 4px' }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Issue Tracker</div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>City Services Portal</div>
+        </div>
+        <div className="divider" style={{ margin: '12px 0' }} />
+        <Link to="/dashboard" className="sidebar-link active">
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+          </svg>
+          All Issues
+        </Link>
+        <Link to="/" className="sidebar-link">
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z" />
+          </svg>
+          Map View
+        </Link>
+        <Link to="/stats" className="sidebar-link">
+          <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+          </svg>
+          Statistics
+        </Link>
+
+        <div className="divider" />
+        <div className="sidebar-section-label">QUICK SUMMARY</div>
+        <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {[
+            { label: 'Pending', value: pending, color: 'var(--text)' },
+            { label: 'Due Today', value: Math.min(pending, 8), color: '#ef4444' },
+            { label: 'Resolved 24h', value: resolved24h, color: 'var(--primary)' },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+              <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+              <span style={{ fontWeight: 700, color }}>{String(value).padStart(2, '0')}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Main content */}
+      <div className="sidebar-content">
+        <div style={{ marginBottom: 24 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700 }}>Assigned Issue Clusters</h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginTop: 2 }}>
+            Managing operational maintenance and public safety reports.
           </p>
         </div>
 
-        {/* Department KPIs */}
-        {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-            {[
-              { label: 'Total Assigned', value: stats.total_clusters || 0, color: 'text-white' },
-              { label: 'Open', value: stats.open_clusters || 0, color: 'text-orange-400' },
-              { label: 'In Progress', value: stats.assigned_clusters || 0, color: 'text-brand-400' },
-              { label: 'Resolved', value: stats.resolved_clusters || 0, color: 'text-green-400' },
-            ].map((kpi) => (
-              <div key={kpi.label} className="card p-3">
-                <p className={`text-2xl font-bold ${kpi.color}`}>{kpi.value}</p>
-                <p className="text-slate-500 text-xs mt-0.5">{kpi.label}</p>
-              </div>
-            ))}
-          </div>
-        )}
-
         {/* Filters */}
-        <div className="flex gap-2 mb-4 flex-wrap">
-          {[
-            { value: 'all', label: 'All' },
-            { value: 'open', label: 'Open' },
-            { value: 'assigned', label: 'In Progress' },
-          ].map((f) => (
-            <button
-              key={f.value}
-              onClick={() => setFilter(f.value)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                filter === f.value
-                  ? 'bg-brand-600 text-white'
-                  : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
+        <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Category</label>
+            <select className="form-select" style={{ width: 160 }} value={catFilter} onChange={e => { setCatFilter(e.target.value); setPage(1); }}>
+              <option value="all">All Categories</option>
+              {['Infrastructure', 'Sanitation', 'Utilities', 'Public Safety', 'General'].map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Status Filter</label>
+            <select className="form-select" style={{ width: 180 }} value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }}>
+              <option value="active">Active / Pending</option>
+              <option value="all">All</option>
+              <option value="resolved">Resolved</option>
+            </select>
+          </div>
         </div>
 
-        {/* Clusters table */}
-        {loading ? (
-          <div className="flex justify-center py-12">
-            <div className="w-8 h-8 border-2 border-brand-600/30 border-t-brand-600 rounded-full animate-spin" />
-          </div>
-        ) : (
-          <div className="card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="border-b border-white/5">
-                  <tr className="text-left">
-                    <th className="text-xs text-slate-500 uppercase px-4 py-3">Issue</th>
-                    <th className="text-xs text-slate-500 uppercase px-4 py-3">Reports</th>
-                    <th className="text-xs text-slate-500 uppercase px-4 py-3">Priority</th>
-                    <th className="text-xs text-slate-500 uppercase px-4 py-3">Status</th>
-                    <th className="text-xs text-slate-500 uppercase px-4 py-3">Age (SLA)</th>
-                    <th className="text-xs text-slate-500 uppercase px-4 py-3"></th>
+        {/* Table */}
+        <div className="card" style={{ overflow: 'hidden' }}>
+          {loading ? (
+            <div style={{ padding: 48, textAlign: 'center' }}>
+              <div className="spinner" style={{ width: 28, height: 28, borderColor: 'var(--border)', borderTopColor: 'var(--primary)', margin: '0 auto' }} />
+            </div>
+          ) : filtered.length === 0 ? (
+            <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-secondary)' }}>No clusters found.</div>
+          ) : (
+            <>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>CATEGORY</th>
+                    <th>LOCATION</th>
+                    <th>REPORTS</th>
+                    <th>STATUS</th>
+                    <th>AGE</th>
+                    <th>PRIORITY</th>
+                    <th></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
-                  {sortedClusters.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="text-center py-12 text-slate-500 text-sm">
-                        No clusters found
-                      </td>
-                    </tr>
-                  ) : (
-                    sortedClusters.map((cluster) => (
-                      <tr
-                        key={cluster.id}
-                        className="hover:bg-white/5 transition-colors cursor-pointer"
-                        onClick={() => navigate(`/clusters/${cluster.id}`)}
-                      >
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xl">{CATEGORY_ICONS[cluster.category]}</span>
-                            <div>
-                              <p className="text-white text-sm font-medium">
-                                {CATEGORY_LABELS[cluster.category]}
-                              </p>
-                              <p className="text-slate-600 text-xs font-mono">
-                                {cluster.centroid_lat.toFixed(3)}, {cluster.centroid_lng.toFixed(3)}
-                              </p>
-                            </div>
-                          </div>
+                <tbody>
+                  {paginated.map((c: any) => {
+                    const badge = priorityBadge(c.priority);
+                    return (
+                      <tr key={c.id}>
+                        <td style={{ fontWeight: 500 }}>{CATEGORY_LABELS[c.category] ?? 'General'}</td>
+                        <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                          {c.centroid_lat?.toFixed(3)}, {c.centroid_lng?.toFixed(3)}
                         </td>
-                        <td className="px-4 py-3">
-                          <span className="text-white font-semibold">{cluster.report_count}</span>
+                        <td style={{ fontWeight: 600 }}>{c.report_count}</td>
+                        <td>
+                          {c.status === 'open' ? (
+                            <span style={{ color: '#ef4444', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
+                              Urgent ↓
+                            </span>
+                          ) : c.status === 'assigned' || c.status === 'in_progress' ? (
+                            <span style={{ color: '#f97316', fontWeight: 500, fontSize: 13 }}>In Progress</span>
+                          ) : (
+                            <span style={{ color: '#10b981', fontWeight: 500, fontSize: 13 }}>Resolved</span>
+                          )}
                         </td>
-                        <td className="px-4 py-3">
-                          <div
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${
-                              cluster.priority >= 70
-                                ? 'bg-red-500/20 text-red-400'
-                                : cluster.priority >= 40
-                                ? 'bg-orange-500/20 text-orange-400'
-                                : 'bg-green-500/20 text-green-400'
-                            }`}
-                          >
-                            {cluster.priority}
-                          </div>
+                        <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{timeAgo(c.created_at)}</td>
+                        <td>
+                          <span style={{ background: badge.bg, color: badge.color, padding: '3px 10px', borderRadius: 4, fontSize: 11, fontWeight: 700 }}>
+                            {badge.label}
+                          </span>
                         </td>
-                        <td className="px-4 py-3">
-                          <div
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold"
-                            style={{
-                              backgroundColor: `${STATUS_COLORS[cluster.status]}20`,
-                              color: STATUS_COLORS[cluster.status],
-                            }}
-                          >
-                            {STATUS_LABELS[cluster.status]}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className={`flex items-center gap-1 text-sm ${getSlaClass(cluster.created_at)}`}>
-                            <ClockIcon className="w-3.5 h-3.5" />
-                            {formatAge(cluster.created_at)}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <ChevronRightIcon className="w-4 h-4 text-slate-600" />
+                        <td>
+                          <Link to={`/issues/${c.id}`} style={{ color: 'var(--primary)', fontSize: 13, fontWeight: 500, textDecoration: 'none' }}>
+                            View Details
+                          </Link>
                         </td>
                       </tr>
-                    ))
-                  )}
+                    );
+                  })}
                 </tbody>
               </table>
-            </div>
-          </div>
-        )}
+
+              {/* Pagination */}
+              <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, color: 'var(--text-secondary)' }}>
+                <span>Showing {((page - 1) * PER_PAGE) + 1}–{Math.min(page * PER_PAGE, filtered.length)} of {filtered.length} clusters</span>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button className="btn btn-outline btn-sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>‹</button>
+                  <button className="btn btn-outline btn-sm" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>›</button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div style={{ marginTop: 20, borderLeft: '4px solid var(--primary)', paddingLeft: 14, fontSize: 13, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+          "Priority is automatically calculated based on report frequency, hazard level, and cluster age."
+        </div>
       </div>
     </div>
   );

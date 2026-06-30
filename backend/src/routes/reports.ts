@@ -37,7 +37,7 @@ const VALID_CATEGORIES: IssueCategory[] = [
 
 const CreateReportSchema = z.object({
   category: z.enum(VALID_CATEGORIES as [IssueCategory, ...IssueCategory[]]),
-  description: z.string().min(10, 'Description must be at least 10 characters').max(1000).optional(),
+  description: z.string().min(3, 'Description must be at least 3 characters').max(1000).optional(),
   lat: z.coerce.number().min(-90).max(90),
   lng: z.coerce.number().min(-180).max(180),
 });
@@ -74,18 +74,21 @@ router.post(
       // 2. Reverse geocode
       const addressText = await reverseGeocode(lat, lng);
 
-      // 3. Insert report with PostGIS point
+      // 3. Insert report directly (bypasses PostgREST schema cache for geometry columns)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: report, error: insertError } = await (supabaseAdmin as any).rpc('create_report', {
-        p_id: reportId,
-        p_reporter_id: req.userId || null,
-        p_category: category,
-        p_description: description || null,
-        p_photo_url: photoUrl || null,
-        p_lat: lat,
-        p_lng: lng,
-        p_address_text: addressText,
-      });
+      const { error: insertError } = await (supabaseAdmin as any)
+        .from('issue_reports')
+        .insert({
+          id: reportId,
+          reporter_id: req.userId || null,
+          category,
+          description: description || null,
+          photo_url: photoUrl || null,
+          // PostgREST accepts WKT for geometry columns
+          location: `SRID=4326;POINT(${lng} ${lat})`,
+          address_text: addressText,
+          status: 'reported',
+        });
 
       if (insertError) {
         logger.error({ error: insertError }, 'Failed to insert report');
@@ -155,22 +158,27 @@ router.get('/:id', async (req, res, next) => {
 
 /**
  * GET /api/reports
- * Get reports, optionally filtered by cluster_id.
+ * Get reports. Supports filtering by cluster_id and reporter_id.
  */
 router.get('/', async (req, res, next) => {
   try {
-    const { cluster_id, limit = '20', offset = '0' } = req.query;
+    const { cluster_id, reporter_id, limit = '50', offset = '0' } = req.query;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabaseAdmin as any).rpc('get_reports_geojson', {
-      p_cluster_id: (cluster_id as string) || null,
-      p_limit: parseInt(limit as string, 10),
-      p_offset: parseInt(offset as string, 10),
-    });
+    let query = (supabaseAdmin as any)
+      .from('issue_reports')
+      .select(`
+        id, reporter_id, category, description, photo_url,
+        address_text, status, cluster_id, created_at, updated_at
+      `)
+      .order('created_at', { ascending: false })
+      .limit(parseInt(limit as string, 10))
+      .range(parseInt(offset as string, 10), parseInt(offset as string, 10) + parseInt(limit as string, 10) - 1);
 
-    if (error) {
-      throw new HttpError(500, 'Failed to fetch reports', 'DB_ERROR');
-    }
+    if (cluster_id) query = query.eq('cluster_id', cluster_id as string);
+    if (reporter_id) query = query.eq('reporter_id', reporter_id as string);
 
+    const { data, error } = await query;
+    if (error) throw new HttpError(500, 'Failed to fetch reports', 'DB_ERROR');
     res.json(data || []);
   } catch (err) {
     next(err);

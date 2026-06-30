@@ -1,69 +1,32 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
-import type { User, Session } from '@supabase/supabase-js';
-import type { UserRole } from '../types';
+import type { User } from '@supabase/supabase-js';
+
+interface Profile {
+  id: string;
+  full_name: string | null;
+  role: 'citizen' | 'department_staff' | 'admin';
+  department_id: string | null;
+}
 
 interface AuthState {
   user: User | null;
-  session: Session | null;
-  role: UserRole;
-  departmentId: string | null;
+  profile: Profile | null;
   loading: boolean;
-  
+  setUser: (user: User | null) => void;
+  setProfile: (profile: Profile | null) => void;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, fullName: string) => Promise<void>;
   signOut: () => Promise<void>;
-  initialize: () => Promise<void>;
 }
 
-export const useAuthStore = create<AuthState>((set, get) => ({
+export const useAuthStore = create<AuthState>((set) => ({
   user: null,
-  session: null,
-  role: 'citizen',
-  departmentId: null,
+  profile: null,
   loading: true,
 
-  initialize: async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    
-    if (session?.user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role, department_id')
-        .eq('id', session.user.id)
-        .single();
-      
-      set({
-        user: session.user,
-        session,
-        role: profile?.role as UserRole || 'citizen',
-        departmentId: profile?.department_id || null,
-        loading: false,
-      });
-    } else {
-      set({ loading: false });
-    }
-
-    // Listen for auth changes
-    supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session?.user) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('role, department_id')
-          .eq('id', session.user.id)
-          .single();
-        
-        set({
-          user: session.user,
-          session,
-          role: profile?.role as UserRole || 'citizen',
-          departmentId: profile?.department_id || null,
-        });
-      } else {
-        set({ user: null, session: null, role: 'citizen', departmentId: null });
-      }
-    });
-  },
+  setUser: (user) => set({ user, loading: false }),
+  setProfile: (profile) => set({ profile }),
 
   signIn: async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -74,15 +37,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const { error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: { full_name: fullName, role: 'citizen' },
-      },
+      options: { data: { full_name: fullName, role: 'citizen' } },
     });
     if (error) throw error;
   },
 
   signOut: async () => {
     await supabase.auth.signOut();
-    set({ user: null, session: null, role: 'citizen', departmentId: null });
+    set({ user: null, profile: null });
   },
 }));

@@ -1,155 +1,128 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { ExclamationCircleIcon } from '@heroicons/react/24/outline';
 
 export default function AuthPage() {
-  const { signIn, signUp } = useAuthStore();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
+  const [info, setInfo] = useState<string | null>(null);
+
+  const { signIn, signUp, user } = useAuthStore();
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const redirect = params.get('redirect') ?? '/';
+
+  useEffect(() => {
+    if (user) navigate(redirect, { replace: true });
+  }, [user, navigate, redirect]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setError(null);
-
+    setLoading(true); setError(null); setInfo(null);
     try {
       if (mode === 'signin') {
         await signIn(email, password);
+        navigate(redirect, { replace: true });
       } else {
         await signUp(email, password, fullName);
-        setSuccess(true);
+        setInfo('Account created! Check your email to confirm, then sign in.');
+        setMode('signin');
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Authentication failed');
+    } catch (err: any) {
+      setError(err.message ?? 'An error occurred. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-civic-bg flex items-center justify-center p-4">
-      {/* Background gradient */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand-600/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl" />
-      </div>
-
-      <div className="w-full max-w-md relative">
-        {/* Brand */}
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-2xl bg-brand-600 flex items-center justify-center mx-auto mb-4">
-            <span className="text-white font-bold text-2xl">CP</span>
-          </div>
-          <h1 className="text-2xl font-bold text-white">CivicPulse</h1>
-          <p className="text-slate-500 text-sm mt-1">Your voice for a better city</p>
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
+      {/* Minimal navbar */}
+      <nav style={{ height: 56, background: 'var(--surface)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', padding: '0 24px' }}>
+        <Link to="/" style={{ fontWeight: 700, fontSize: 18, color: 'var(--primary)', textDecoration: 'none' }}>CivicLink</Link>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 16 }}>
+          <Link to="/" style={{ color: 'var(--text-secondary)', fontSize: 14, textDecoration: 'none' }}>Map View</Link>
+          <Link to="/issues" style={{ color: 'var(--text-secondary)', fontSize: 14, textDecoration: 'none' }}>All Issues</Link>
+          <Link to="/stats" style={{ color: 'var(--text-secondary)', fontSize: 14, textDecoration: 'none' }}>Statistics</Link>
         </div>
+      </nav>
 
-        <div className="card p-6">
-          {/* Mode toggle */}
-          <div className="flex rounded-lg bg-white/5 p-1 mb-6">
-            <button
-              onClick={() => { setMode('signin'); setError(null); }}
-              className={`flex-1 py-2 rounded-md text-sm font-medium transition-all ${
-                mode === 'signin' ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Sign In
-            </button>
-            <button
-              onClick={() => { setMode('signup'); setError(null); }}
-              className={`flex-1 py-2 rounded-md text-sm font-medium transition-all ${
-                mode === 'signup' ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Sign Up
-            </button>
+      {/* Form */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <div style={{ width: '100%', maxWidth: 400 }}>
+          <div style={{ textAlign: 'center', marginBottom: 28 }}>
+            <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 6 }}>
+              {mode === 'signin' ? 'Sign in to CivicLink' : 'Create your account'}
+            </h1>
+            <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
+              {mode === 'signin'
+                ? 'Report civic issues and track resolutions'
+                : 'Join your community to report and track issues'}
+            </p>
           </div>
 
-          {success ? (
-            <div className="text-center py-4">
-              <p className="text-green-400 font-medium">Account created!</p>
-              <p className="text-slate-400 text-sm mt-1">Check your email to confirm your account.</p>
-              <button
-                onClick={() => { setSuccess(false); setMode('signin'); }}
-                className="btn-primary mt-4"
-              >
-                Sign In
-              </button>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="card" style={{ padding: 28 }}>
+            {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
+            {info && <div className="alert alert-success" style={{ marginBottom: 16 }}>{info}</div>}
+
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               {mode === 'signup' && (
                 <div>
-                  <label className="label">Full Name</label>
-                  <input
-                    type="text"
-                    className="input-field"
-                    placeholder="John Doe"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    required
-                  />
+                  <label className="form-label">Full Name</label>
+                  <input className="form-input" type="text" placeholder="John Doe"
+                    value={fullName} onChange={e => setFullName(e.target.value)} required />
                 </div>
               )}
               <div>
-                <label className="label">Email</label>
-                <input
-                  type="email"
-                  className="input-field"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
+                <label className="form-label">Email address</label>
+                <input className="form-input" type="email" placeholder="you@example.com"
+                  value={email} onChange={e => setEmail(e.target.value)} required />
               </div>
               <div>
-                <label className="label">Password</label>
-                <input
-                  type="password"
-                  className="input-field"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  minLength={6}
-                  required
-                />
+                <label className="form-label">Password</label>
+                <input className="form-input" type="password" placeholder="••••••••"
+                  value={password} onChange={e => setPassword(e.target.value)} required minLength={6} />
               </div>
 
-              {error && (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 flex items-center gap-2">
-                  <ExclamationCircleIcon className="w-4 h-4 text-red-400 flex-shrink-0" />
-                  <p className="text-red-300 text-sm">{error}</p>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="btn-primary w-full flex items-center justify-center gap-2"
-                id="auth-submit-btn"
-              >
-                {loading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    {mode === 'signin' ? 'Signing in...' : 'Creating account...'}
-                  </>
-                ) : (
-                  mode === 'signin' ? 'Sign In' : 'Create Account'
-                )}
+              <button type="submit" className="btn btn-primary btn-lg w-full"
+                style={{ justifyContent: 'center', marginTop: 4 }} disabled={loading}>
+                {loading
+                  ? <><span className="spinner" />{mode === 'signin' ? 'Signing in...' : 'Creating account...'}</>
+                  : mode === 'signin' ? 'Sign In' : 'Create Account'
+                }
               </button>
             </form>
-          )}
-        </div>
 
-        <p className="text-center text-slate-600 text-xs mt-6">
-          By using CivicPulse, you agree to report issues responsibly.
-        </p>
+            <div className="divider" style={{ margin: '20px 0' }} />
+
+            <p style={{ textAlign: 'center', fontSize: 14, color: 'var(--text-secondary)' }}>
+              {mode === 'signin' ? "Don't have an account? " : 'Already have an account? '}
+              <button
+                onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); setInfo(null); }}
+                style={{ color: 'var(--primary)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>
+                {mode === 'signin' ? 'Sign up free' : 'Sign in'}
+              </button>
+            </p>
+          </div>
+        </div>
       </div>
+
+      <footer className="footer">
+        <div>
+          <div className="footer-brand">CivicLink</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>© 2024 Municipal Utility Department. All rights reserved.</div>
+        </div>
+        <div className="footer-links">
+          <a href="#">Transparency Notice</a>
+          <a href="#">Privacy Policy</a>
+          <a href="#">Accessibility</a>
+          <a href="#">Contact Support</a>
+        </div>
+      </footer>
     </div>
   );
 }

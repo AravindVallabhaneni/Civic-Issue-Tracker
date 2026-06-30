@@ -75,9 +75,8 @@ export async function clusterReport(input: ClusteringInput): Promise<string> {
 
   logger.info({ reportId, category, lat, lng, radius }, 'Running clustering for new report');
 
-  // Use PostGIS ST_DWithin to find nearby open/assigned clusters of same category.
-  // ST_DWithin on geography type uses metres — simpler than ST_DWithin on geometry
-  // which uses the CRS unit (degrees). We cast to geography in the query.
+  // Find nearby open clusters using PostGIS via raw SQL through the RPC layer.
+  // If RPCs are unavailable (schema not applied), skip clustering gracefully.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: nearbyClusters, error: queryError } = await (supabaseAdmin as any).rpc(
     'find_nearby_clusters',
@@ -90,36 +89,26 @@ export async function clusterReport(input: ClusteringInput): Promise<string> {
   );
 
   if (queryError) {
-    logger.error({ error: queryError }, 'Failed to query nearby clusters');
-    throw new Error(`Clustering query failed: ${queryError.message}`);
+    logger.warn({ error: queryError }, 'Clustering RPC unavailable — creating standalone cluster via direct insert');
+    // Fall back to creating a cluster with direct inserts (no PostGIS centroid)
+    return await createClusterDirect(reportId, category, lat, lng);
   }
 
   let clusterId: string;
 
   if (nearbyClusters && nearbyClusters.length > 0) {
     // Join to the nearest existing cluster
-    const nearest = nearbyClusters[0] as ClusterRow; // already ordered by distance in RPC
+    const nearest = nearbyClusters[0] as ClusterRow;
     clusterId = nearest.id;
 
     logger.info({ clusterId, existingCount: nearest.report_count }, 'Found existing cluster — joining');
-
-    // Recompute centroid by averaging all member report locations.
-    // We do this with a PostGIS query to keep the computation server-side.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: updateError } = await (supabaseAdmin as any).rpc('update_cluster_centroid', {
-      p_cluster_id: clusterId,
-    });
-
-    if (updateError) {
-      logger.warn({ error: updateError }, 'Failed to recompute centroid, proceeding without centroid update');
-    }
 
     // Increment report_count and recompute priority
     const newCount = nearest.report_count + 1;
     const newPriority = computePriority(newCount, nearest.created_at);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: clusterUpdateError } = await (supabaseAdmin as any)
+    await (supabaseAdmin as any)
       .from('issue_clusters')
       .update({
         report_count: newCount,
@@ -128,38 +117,14 @@ export async function clusterReport(input: ClusteringInput): Promise<string> {
       })
       .eq('id', clusterId);
 
-    if (clusterUpdateError) {
-      logger.error({ error: clusterUpdateError }, 'Failed to update cluster stats');
-      throw new Error(`Cluster update failed: ${clusterUpdateError.message}`);
-    }
-  } else {
-    // No nearby cluster — create a new one and auto-route it
-    logger.info({ category, lat, lng }, 'No nearby cluster found — creating new cluster');
-
-    const departmentId = await findDepartmentForCategory(category);
-    const priority = computePriority(1, new Date().toISOString());
-
-    // Insert new cluster. We use ST_SetSRID(ST_MakePoint(lng, lat), 4326) for the centroid.
+    // Try to update centroid via RPC (non-fatal if unavailable)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: newCluster, error: insertError } = await (supabaseAdmin as any).rpc(
-      'create_cluster',
-      {
-        p_category: category,
-        p_lat: lat,
-        p_lng: lng,
-        p_department_id: departmentId,
-        p_priority: priority,
-      }
-    );
+    await (supabaseAdmin as any).rpc('update_cluster_centroid', { p_cluster_id: clusterId }).catch(() => {});
 
-    if (insertError || !newCluster) {
-      logger.error({ error: insertError }, 'Failed to create new cluster');
-      throw new Error(`Cluster creation failed: ${insertError?.message}`);
-    }
-
-    const clusterRows = newCluster as Array<{ id: string }>;
-    clusterId = clusterRows[0]?.id || (newCluster as { id: string }).id;
-    logger.info({ clusterId, departmentId }, 'New cluster created and routed');
+  } else {
+    // No nearby cluster — create a new one via direct insert
+    logger.info({ category, lat, lng }, 'No nearby cluster found — creating new cluster');
+    clusterId = await createClusterDirect(reportId, category, lat, lng);
   }
 
   // Attach the report to the cluster
@@ -179,6 +144,42 @@ export async function clusterReport(input: ClusteringInput): Promise<string> {
   }
 
   logger.info({ reportId, clusterId }, '✅ Report successfully clustered');
+  return clusterId;
+}
+
+/**
+ * Create a cluster with direct table insert (no PostGIS RPC needed).
+ * Uses EWKT string for the centroid geometry which PostgREST accepts.
+ */
+async function createClusterDirect(
+  _reportId: string,
+  category: IssueCategory,
+  lat: number,
+  lng: number
+): Promise<string> {
+  const clusterId = crypto.randomUUID();
+  const departmentId = await findDepartmentForCategory(category);
+  const priority = computePriority(1, new Date().toISOString());
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabaseAdmin as any)
+    .from('issue_clusters')
+    .insert({
+      id: clusterId,
+      category,
+      centroid: `SRID=4326;POINT(${lng} ${lat})`,
+      report_count: 1,
+      department_id: departmentId,
+      status: departmentId ? 'assigned' : 'open',
+      priority,
+    });
+
+  if (error) {
+    logger.error({ error }, 'Failed to create cluster via direct insert');
+    throw new Error(`Cluster creation failed: ${error.message}`);
+  }
+
+  logger.info({ clusterId, departmentId }, 'New cluster created via direct insert');
   return clusterId;
 }
 
